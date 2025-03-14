@@ -43,45 +43,63 @@ The core staking contract with support for deposits, withdrawals, and reward cal
 
 ### Functions  
 
-1. ```  
+```  
 function stake(uint256 amount)  
 ```  
 
 Allows users to stake tokens, with in build validation for minimum and maximum amounts and pool status  
 
-2. function unstake()  
+```  
+function unstake()  
+```  
 
 Withdraws staked tokens along with accumulated rewards and applicable early withdrawal fees  
 
-3. function claimRewards()  
+```  
+function claimRewards()  
+```
 
 Claims accumulated rewards without unstaking principal tokens  
 
-4. function updatePoolConfig(uint256 newStartTime, uint256 newDuration, uint256 newRewardsPerSecond uint256 newMaxTotalStake)  
+```  
+function updatePoolConfig(uint256 newStartTime, uint256 newDuration, uint256 newRewardsPerSecond uint256 newMaxTotalStake)  
+```  
 
 Updates pool configuration parameters(only before pool start)  
 
-5. function updateFeeConfig(uint256 newFeePercentage, uint256 newMinimumFee, uint256 newMaximumFee)  
+```  
+function updateFeeConfig(uint256 newFeePercentage, uint256 newMinimumFee, uint256 newMaximumFee)  
+```  
 
 Updates the fee structure for  early withdrawals  
 
-6. function setLockPeriod(address user, uint256 lockEndTime)  
+```  
+function setLockPeriod(address user, uint256 lockEndTime)  
+```  
 
 Sets a lock period for specific user's stake  
 
-7. function UpdatePoolAdmin(address newAdmin)  
+```  
+function UpdatePoolAdmin(address newAdmin)  
+```  
 
 Updates the pool admin role  
 
-8. function UpdateFeeManager(address newFeeManager)  
+```  
+function UpdateFeeManager(address newFeeManager)  
+```  
 
 Updates the fee manager role  
 
-9. function UpdateFeeCollector(address newFeeCollector)  
+```  
+function UpdateFeeCollector(address newFeeCollector)  
+```  
 
 Updates the fee collector role  
 
-10. function UpdateRewardManager(address newRewardManager)  
+```  
+function UpdateRewardManager(address newRewardManager)  
+```  
 
 Updates the reward manager role  
 
