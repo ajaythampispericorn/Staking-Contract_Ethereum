@@ -4,11 +4,11 @@ A comprehensive Solidity based staking contract system with role based access co
 
 ## Features  
 
-- Time bound staking - pools have specific start and end times  
-- Flexible fee structure - Configurable early unstake fees with minimum and maximum thresholds  
-- Role based access control - Separate roles for admin, fee manageer, and reward distribution  
+- Time Bound Staking - pools have specific start and end times  
+- Flexible Fee Structure - Configurable early unstake fees with minimum and maximum thresholds  
+- Role Based Access Control - Separate roles for admin, fee manageer, and reward distribution  
 - Reward Calculation - Time- weighted reward distribution based on tokens staked  
-- lock Periods - Optional time lock for stakes, preventing early withdrawals  
+- Lock Periods - Optional time lock for stakes, preventing early withdrawals  
 - Comprehensive Testing - Extensive unit, integration and stress tests  
 
 ## Architecture  
@@ -28,13 +28,13 @@ Role based access control system to manage permissions.
 - Pool Admin : Can update pool configurations and set lock periods  
 - Fee Manager : Can update fee confuigurations  
 - Fee Collector : Can collect accumulated fees  
-- reward Manager : Can lock and unlock rewards for the pool  
+- Reward Manager : Can lock and unlock rewards for the pool  
 
 ### Staking.sol  
 
 The core staking contract with support for deposits, withdrawals, and reward calculations.  
 
-- time bound staking windows with start and end times  
+- Time bound staking windows with start and end times  
 - Configurable staking limits (min/max per user and total)  
 - Early unstake fee calculation and minimum and maximum thresholds  
 - Reward distribution based on proportional stake amount and time  
@@ -43,7 +43,9 @@ The core staking contract with support for deposits, withdrawals, and reward cal
 
 ### Functions  
 
-1. function stake(uint256 amount)  
+```  
+function stake(uint256 amount)  
+```  
 
 Allows users to stake tokens, with in build validation for minimum and maximum amounts and pool status  
 
@@ -115,21 +117,18 @@ This includes an extensive test suite covering:
 ```  
 git clone https://github.com/ajaythampispericorn/Staking-Contract_Ethereum  
 cd Staking-Contract_Ethereum
-
 ```  
 
 2. Install dependencies  
 
 ```  
 npm install  
-
 ```  
 
 3. Compile the contracts  
 
 ```  
 npx hardhat compile  
-
 ```  
 
 4. Test the contract and find test coverage  
@@ -137,7 +136,6 @@ npx hardhat compile
 ```  
 npx hardhat test  
 npx hardhat coverage  
-
 ```  
 
 ## License  
