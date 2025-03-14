@@ -43,7 +43,7 @@ The core staking contract with support for deposits, withdrawals, and reward cal
 
 ### Functions  
 
-```  
+1. ```  
 function stake(uint256 amount)  
 ```  
 
