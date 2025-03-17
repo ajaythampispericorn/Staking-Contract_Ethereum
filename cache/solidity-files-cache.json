@@ -289,8 +289,8 @@
       ]
     },
     "/home/spericorn/Ajay/Staking Contract_Ethereum/contracts/staking.sol": {
-      "lastModificationDate": 1741781274678,
-      "contentHash": "ff8f73b1a1503c50f778e0857a4ec998",
+      "lastModificationDate": 1742184586438,
+      "contentHash": "ab5a85724a1941292b5e71789aef77d6",
       "sourceName": "contracts/staking.sol",
       "solcConfig": {
         "version": "0.8.20",

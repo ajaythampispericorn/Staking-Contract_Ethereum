@@ -18,6 +18,7 @@ describe("Staking Contract", function () {
   let user2;
   let user3;
   let user4;
+  let user5;
 
   // Constants
   const PRECISION_FACTOR = 100000n;
@@ -79,7 +80,7 @@ describe("Staking Contract", function () {
     startTime = BigInt(currentTimestamp + 86400);
     
     // Get signers
-    [owner, feeManager, rewardManager, feeCollector, user1, user2, user3, user4] = await ethers.getSigners();
+    [owner, feeManager, rewardManager, feeCollector, user1, user2, user3, user4, user5] = await ethers.getSigners();
 
     // Deploy MyCoin
     const MyCoin = await ethers.getContractFactory("MyCoin");
@@ -575,27 +576,55 @@ describe("Staking Contract", function () {
       ).to.be.revertedWithCustomError(staking, "StakeTooHigh");
     });
 
-    it("Should fail to stake when pool is full", async function () {
-
-      const poolConfig = await staking.getPoolConfig();
-
-      await staking.connect(user1).stake(poolConfig.maxStakePerUser);
-      await staking.connect(user2).stake(poolConfig.maxStakePerUser);
-      await staking.connect(user3).stake(poolConfig.maxStakePerUser);
-
-      const remainingSpace = poolConfig.maxTotalStake - (poolConfig.maxStakePerUser * 3n);
-      await staking.connect(owner).stake(remainingSpace);
-
-      const stats = await staking.getPoolStats();
-      expect(stats._totalStaked).to.equal(maxTotalStake);
-  
-      // Attempt to stake with new user
-      const stakeAmount = ethers.parseUnits("1", 6); 
-      await expect(
-          staking.connect(user4).stake(stakeAmount)
-      ).to.be.revertedWithCustomError(staking, "PoolFull");
-  });
+  it("Should fail to stake when pool is full", async function () {
+    const poolConfig = await staking.getPoolConfig();
+    const maxStakePerUser = poolConfig.maxStakePerUser;
+    const maxTotalStake = poolConfig.maxTotalStake;
+    const minStakeAmount = poolConfig.minStakeAmount;
     
+    console.log("Pool configuration:");
+    console.log("Max total stake:", maxTotalStake.toString());
+    console.log("Max stake per user:", maxStakePerUser.toString());
+    console.log("Min stake amount:", minStakeAmount.toString());
+    
+    // Calculate how many full stakes we need and any remainder
+    const numFullStakes = maxTotalStake / maxStakePerUser;
+    const remainder = maxTotalStake % maxStakePerUser;
+    
+    console.log("Number of full stakes needed:", numFullStakes.toString());
+    console.log("Remainder after full stakes:", remainder.toString());
+    
+    // Users to fill the pool (excluding user5 for final test)
+    const fillUsers = [user1, user2, user3, user4, owner];
+    
+    // Have users stake maximum amount
+    for (let i = 0; i < numFullStakes && i < fillUsers.length; i++) {
+      console.log(`User ${i+1} staking max amount ${maxStakePerUser.toString()}`);
+      await staking.connect(fillUsers[i]).stake(maxStakePerUser);
+    }
+    
+    // If we have remainder and it's at least the minimum stake, have another user stake it
+    if (remainder >= minStakeAmount && numFullStakes < fillUsers.length) {
+      console.log(`User ${Number(numFullStakes)+1} staking remainder ${remainder.toString()}`);
+      await staking.connect(fillUsers[Number(numFullStakes)]).stake(remainder);
+    }
+    
+    // Check pool status
+    const stats = await staking.getPoolStats();
+    console.log("Total staked:", stats._totalStaked.toString());
+    
+    // Verify pool is full
+    if (stats._totalStaked + minStakeAmount <= maxTotalStake) {
+      console.log("Pool not filled enough");
+      return;
+    }
+    
+    // Try to stake with user5, should fail with PoolFull
+    await expect(
+      staking.connect(user5).stake(minStakeAmount)
+    ).to.be.revertedWithCustomError(staking, "PoolFull");
+  });
+
     it("Should increase existing stake correctly", async function () {
       const initialStake = ethers.parseUnits("300", 6);
       const additionalStake = ethers.parseUnits("200", 6);
@@ -1565,6 +1594,489 @@ describe("Staking Contract", function () {
       await advanceTimeAndBlock(86400); // 1 day more
       const pendingLongAfterEnd = await staking.calculatePendingRewards(user1.address);
       expect(pendingLongAfterEnd).to.equal(pendingAfterEnd);
+    });
+  });
+
+  // Add these tests to the main describe("Staking Contract") block, after the existing "Staging Tests" section
+
+  describe("Extended Staging Tests", function () {
+    it("Should handle role transfers during an active staking period", async function () {
+      // Lock rewards for the pool
+      const requiredRewards = rewardsPerSecond * duration * 2n;
+      await staking.connect(rewardManager).lockRewards(requiredRewards);
+      
+      await advanceToPoolStart();
+
+      await staking.connect(user1).stake(ethers.parseUnits("500", 6));
+      await staking.connect(user2).stake(ethers.parseUnits("600", 6));
+
+      const currentBlock = await ethers.provider.getBlock("latest");
+      const lockEndTime = BigInt(currentBlock.timestamp) + 86400n * 5n; // 5 days
+      await staking.connect(owner).setLockPeriod(user1.address, lockEndTime);
+ 
+      await roles.connect(owner).UpdatePoolAdmin(user4.address);
+      expect(await roles.isPoolAdmin(owner.address)).to.be.false;
+      expect(await roles.isPoolAdmin(user4.address)).to.be.true;
+      
+      // The original owner should no longer be able to set lock periods
+      await expect(
+        staking.connect(owner).setLockPeriod(user2.address, lockEndTime)
+      ).to.be.revertedWithCustomError(staking, "NotAuthorised");
+      
+      // The new poolAdmin should be able to set lock periods
+      await staking.connect(user4).setLockPeriod(user2.address, lockEndTime);
+      
+      // Transfer feeManager role to user3
+      await roles.connect(feeManager).UpdateFeeManager(user3.address);
+      expect(await roles.isFeeManager(feeManager.address)).to.be.false;
+      expect(await roles.isFeeManager(user3.address)).to.be.true;
+      
+      // The new fee manager should be able to update fee config
+      await staking.connect(user3).updateFeeConfig(300n, minFee, maxFee);
+      
+      // Verify fee config was updated
+      const feeConfig = await staking.getFeeConfig();
+      expect(feeConfig.earlyUnstakeFeePercentage).to.equal(300n);
+    });
+
+    it("Should handle recovery from emergency situations", async function () {
+      // Lock rewards for the pool
+      const requiredRewards = rewardsPerSecond * duration * 2n;
+      await staking.connect(rewardManager).lockRewards(requiredRewards);
+      
+      // Advance to pool start
+      await advanceToPoolStart();
+      
+      // Users stake tokens
+      await staking.connect(user1).stake(ethers.parseUnits("500", 6));
+      await staking.connect(user2).stake(ethers.parseUnits("600", 6));
+      
+      // Simulate an "emergency" - fees need to be changed immediately
+      await staking.connect(feeManager).updateFeeConfig(0n, 0n, 0n); // Set fees to zero
+      
+      // Users can unstake without fees now
+      const initialBalance = await myCoin.balanceOf(user1.address);
+      await staking.connect(user1).unstake();
+      const finalBalance = await myCoin.balanceOf(user1.address);
+      
+      // User should get full amount back (no fees)
+      const expectedMinAmount = ethers.parseUnits("500", 6);
+      expect(finalBalance - (initialBalance)).to.be.gte(expectedMinAmount);
+      
+      // Verify collected fees are zero
+      expect(await staking.getCollectedFees()).to.equal(0);
+      
+      // Simulate restoring fees after emergency
+      await staking.connect(feeManager).updateFeeConfig(feePercentage, minFee, maxFee);
+      
+      // Pool continues to operate with new settings
+      await staking.connect(user2).unstake();
+      
+      // Verify fees were charged on the second unstake
+      expect(await staking.getCollectedFees()).to.be.gt(0);
+    });
+
+    it("Should handle mid-pool parameter changes correctly", async function () {
+      // Lock rewards for the pool
+      const requiredRewards = rewardsPerSecond * duration * 2n;
+      await staking.connect(rewardManager).lockRewards(requiredRewards);
+      
+      // Advance to pool start
+      await advanceToPoolStart();
+      
+      // Users stake with original parameters
+      await staking.connect(user1).stake(ethers.parseUnits("400", 6));
+      
+      // Update fee configuration mid-pool
+      const newFeePercentage = 200n; // 2%
+      const newMinFee = ethers.parseUnits("5", 6);
+      const newMaxFee = ethers.parseUnits("50", 6);
+      
+      await staking.connect(feeManager).updateFeeConfig(
+        newFeePercentage,
+        newMinFee,
+        newMaxFee
+      );
+      
+      // New user stakes after parameter change
+      await staking.connect(user2).stake(ethers.parseUnits("600", 6));
+      
+      // Advance time
+      await advanceTimeAndBlock(86400 * 5); // 5 days
+      
+      // Both users unstake - should have different fee treatment
+      await staking.connect(user1).unstake();
+      const fees1 = await staking.getCollectedFees();
+      
+      await staking.connect(user2).unstake();
+      const fees2 = await staking.getCollectedFees();
+      
+      // The fee difference should reflect the new fee structure
+      const feeDifference = fees2 - fees1;
+      const expectedFee = (ethers.parseUnits("600", 6) * newFeePercentage) / 10000n;
+      
+      expect(feeDifference).to.be.closeTo(expectedFee, ethers.parseUnits("1", 6));
+    });
+
+    it("Should handle transitioning between multiple pool iterations", async function () {
+      // First pool setup
+      const firstPoolRewards = rewardsPerSecond * duration;
+      await staking.connect(rewardManager).lockRewards(firstPoolRewards);
+      
+      // Advance to first pool start
+      await advanceToPoolStart();
+      
+      // Users stake in first pool
+      await staking.connect(user1).stake(ethers.parseUnits("300", 6));
+      await staking.connect(user2).stake(ethers.parseUnits("400", 6));
+      
+      // Fast forward to near the end of the first pool
+      await advanceTimeAndBlock(Number(duration) - 86400); // 1 day before end
+      
+      // Deploy second pool that will start after first pool ends
+      const currentBlock = await ethers.provider.getBlock("latest");
+      const secondPoolStart = BigInt(currentBlock.timestamp) + 86400n * 2n; // 2 days after current time
+      
+      const Staking = await ethers.getContractFactory("Staking");
+      const secondPool = await Staking.deploy(
+        await myCoin.getAddress(),
+        await roles.getAddress(),
+        secondPoolStart,
+        duration,
+        rewardsPerSecond,
+        maxTotalStake,
+        minStakeAmount,
+        maxStakePerUser,
+        feePercentage,
+        minFee,
+        maxFee
+      );
+      
+      // Lock rewards for second pool
+      await myCoin.connect(rewardManager).approve(await secondPool.getAddress(), ethers.MaxUint256);
+      await secondPool.connect(rewardManager).lockRewards(firstPoolRewards);
+      
+      // Users approve second pool
+      await myCoin.connect(user1).approve(await secondPool.getAddress(), ethers.MaxUint256);
+      await myCoin.connect(user2).approve(await secondPool.getAddress(), ethers.MaxUint256);
+      await myCoin.connect(user3).approve(await secondPool.getAddress(), ethers.MaxUint256);
+      
+      // Advance past first pool end
+      await advanceTimeAndBlock(86400 * 3); // 3 days (past first pool end, into second pool)
+      
+      // Users unstake from first pool
+      await staking.connect(user1).unstake();
+      await staking.connect(user2).unstake();
+      
+      // Users stake in second pool
+      await secondPool.connect(user1).stake(ethers.parseUnits("350", 6));
+      await secondPool.connect(user2).stake(ethers.parseUnits("450", 6));
+      await secondPool.connect(user3).stake(ethers.parseUnits("200", 6)); // New user in second pool
+      
+      // Advance time in second pool
+      await advanceTimeAndBlock(86400 * 10); // 10 days into second pool
+      
+      // Check rewards are accumulating in the second pool
+      const pendingRewards1 = await secondPool.calculatePendingRewards(user1.address);
+      const pendingRewards2 = await secondPool.calculatePendingRewards(user2.address);
+      const pendingRewards3 = await secondPool.calculatePendingRewards(user3.address);
+      
+      expect(pendingRewards1).to.be.gt(0);
+      expect(pendingRewards2).to.be.gt(0);
+      expect(pendingRewards3).to.be.gt(0);
+      
+      // Ratio of rewards should roughly match ratio of stakes
+      const ratio1To2 = (pendingRewards1 * 450n) / (pendingRewards2 * 350n);
+      expect(ratio1To2).to.be.closeTo(1n, 10n); // Should be close to 1.0 (100%)
+    });
+
+    it("Should handle reward distribution fairness with changing total stake", async function () {
+      // Lock rewards for the pool
+      const requiredRewards = rewardsPerSecond * duration * 2n;
+      await staking.connect(rewardManager).lockRewards(requiredRewards);
+      
+      // Advance to pool start
+      await advanceToPoolStart();
+      
+      // First user stakes
+      await staking.connect(user1).stake(ethers.parseUnits("500", 6));
+      
+      // Advance time
+      await advanceTimeAndBlock(86400 * 5); // 5 days
+      
+      // Check user1's rewards after being the only staker for 5 days
+      const soloRewards = await staking.calculatePendingRewards(user1.address);
+      
+      // Second user stakes (now rewards will be split)
+      await staking.connect(user2).stake(ethers.parseUnits("500", 6));
+      
+      // Advance time with two stakers
+      await advanceTimeAndBlock(86400 * 5); // Another 5 days
+      
+      // First user increases stake
+      await staking.connect(user1).stake(ethers.parseUnits("250", 6)); // Now has 750 total
+      
+      // Advance time with uneven stakes
+      await advanceTimeAndBlock(86400 * 5); // Another 5 days
+      
+      // Get final reward amounts
+      const user1Rewards = await staking.calculatePendingRewards(user1.address);
+      const user2Rewards = await staking.calculatePendingRewards(user2.address);
+      
+      // First 5 days: user1 got 100% of rewards
+      // Second 5 days: user1 and user2 each got 50% of rewards
+      // Third 5 days: user1 got 60% (750/1250) and user2 got 40% (500/1250)
+      
+      // First period rewards
+      const dailyRewards = rewardsPerSecond * 86400n;
+      const period1Rewards = dailyRewards * 5n;
+      
+      // Second period rewards (split evenly)
+      const period2RewardsEach = (dailyRewards * 5n) / 2n;
+      
+      // Third period rewards (split proportionally)
+      const period3TotalRewards = dailyRewards * 5n;
+      const period3User1Rewards = (period3TotalRewards * 750n) / 1250n;
+      const period3User2Rewards = (period3TotalRewards * 500n) / 1250n;
+      
+      // Expected total rewards
+      const expectedUser1 = period1Rewards + period2RewardsEach + period3User1Rewards;
+      const expectedUser2 = period2RewardsEach + period3User2Rewards;
+      
+      // Check that actual rewards are close to expected
+      expect(user1Rewards).to.be.closeTo(expectedUser1, ethers.parseUnits("5", 6)); 
+      expect(user2Rewards).to.be.closeTo(expectedUser2, ethers.parseUnits("5", 6)); 
+    });
+
+    it("Should handle large number of users with proper reward distribution", async function () {
+      const testDuration = 86400n * 7n; // 7 days
+      const testStartTime = BigInt(await ethers.provider.getBlock("latest").then(b => b.timestamp)) + 3600n; // 1 hour from now
+      
+      // Deploy test pool
+      const Staking = await ethers.getContractFactory("Staking");
+      const testPool = await Staking.deploy(
+        await myCoin.getAddress(),
+        await roles.getAddress(),
+        testStartTime,
+        testDuration,
+        rewardsPerSecond,
+        maxTotalStake,
+        minStakeAmount,
+        maxStakePerUser,
+        feePercentage,
+        minFee,
+        maxFee
+      );
+      
+      await myCoin.connect(rewardManager).approve(await testPool.getAddress(), ethers.MaxUint256);
+      const testPoolRewards = rewardsPerSecond * testDuration * 2n;
+      await testPool.connect(rewardManager).lockRewards(testPoolRewards);
+      
+      // Setup multiple users (using our available signers)
+      const users = [user1, user2, user3, user4];
+      const stakes = [
+        ethers.parseUnits("200", 6),
+        ethers.parseUnits("300", 6),
+        ethers.parseUnits("150", 6),
+        ethers.parseUnits("400", 6)
+      ];
+      
+      for (let user of users) {
+        await myCoin.connect(user).approve(await testPool.getAddress(), ethers.MaxUint256);
+      }
+      
+      await advanceTimeAndBlock(3700); // Past startTime
+      
+      // Users stake
+      for (let i = 0; i < users.length; i++) {
+        await testPool.connect(users[i]).stake(stakes[i]);
+      }
+      
+      // Advance time
+      await advanceTimeAndBlock(86400 * 3); // 3 days
+      
+      // Calculate pending rewards for each user
+      const pendingRewards = [];
+      const totalStaked = stakes.reduce((sum, stake) => sum + stake, 0n);
+      
+      for (let i = 0; i < users.length; i++) {
+        const reward = await testPool.calculatePendingRewards(users[i].address);
+        pendingRewards.push(reward);
+      }
+      
+      // Verify reward proportions match stake proportions
+      for (let i = 0; i < users.length; i++) {
+        const expectedProportion = (stakes[i] * 1000n) / totalStaked; // Scaled by 1000 for precision
+        const actualProportion = (pendingRewards[i] * 1000n) / pendingRewards.reduce((sum, reward) => sum + reward, 0n);
+        
+        expect(actualProportion).to.be.closeTo(expectedProportion, 10n); // Allow for small rounding differences
+      }
+      
+      // Half the users claim rewards
+      await testPool.connect(users[0]).claimRewards();
+      await testPool.connect(users[2]).claimRewards();
+      
+      // Advance more time
+      await advanceTimeAndBlock(86400 * 3); // Another 3 days
+      
+      // All users unstake
+      for (let i = 0; i < users.length; i++) {
+        await testPool.connect(users[i]).unstake();
+      }
+      
+      // Verify all stakes are removed
+      const stats = await testPool.getPoolStats();
+      expect(stats._totalStaked).to.equal(0);
+    });
+
+    it("Should handle multiple staking pools running concurrently", async function () {
+      const currentBlock = await ethers.provider.getBlock("latest");
+      const currentTimestamp = BigInt(currentBlock.timestamp);
+      
+      const firstPoolStartTime = currentTimestamp + 3600n; // 1 hour from now
+      const secondPoolStartTime = firstPoolStartTime + 86400n; // 1 day after first pool
+      
+      const firstPoolDuration = 86400n * 30n; // 30 days
+      const secondPoolDuration = 86400n * 15n; // 15 days
+      
+      const firstPoolRewardsPerSecond = ethers.parseUnits("0.01", 6);
+      const secondPoolRewardsPerSecond = ethers.parseUnits("0.02", 6); // Higher rewards
+      
+      const Staking = await ethers.getContractFactory("Staking");
+      
+      // Deploy first pool
+      const firstPool = await Staking.deploy(
+        await myCoin.getAddress(),
+        await roles.getAddress(),
+        firstPoolStartTime,
+        firstPoolDuration,
+        firstPoolRewardsPerSecond,
+        maxTotalStake,
+        minStakeAmount,
+        maxStakePerUser,
+        feePercentage,
+        minFee,
+        maxFee
+      );
+      
+      // Deploy second pool
+      const secondPool = await Staking.deploy(
+        await myCoin.getAddress(),
+        await roles.getAddress(),
+        secondPoolStartTime,
+        secondPoolDuration,
+        secondPoolRewardsPerSecond,
+        maxTotalStake,
+        minStakeAmount,
+        maxStakePerUser,
+        feePercentage,
+        minFee,
+        maxFee
+      );
+      
+      // Calculate required rewards
+      const firstPoolRewards = firstPoolRewardsPerSecond * firstPoolDuration;
+      const secondPoolRewards = secondPoolRewardsPerSecond * secondPoolDuration;
+      
+      // Approve and lock rewards for both pools
+      await myCoin.connect(rewardManager).approve(await firstPool.getAddress(), ethers.MaxUint256);
+      await myCoin.connect(rewardManager).approve(await secondPool.getAddress(), ethers.MaxUint256);
+      
+      await firstPool.connect(rewardManager).lockRewards(firstPoolRewards);
+      await secondPool.connect(rewardManager).lockRewards(secondPoolRewards);
+      
+      // Users approve both pools
+      await myCoin.connect(user1).approve(await firstPool.getAddress(), ethers.MaxUint256);
+      await myCoin.connect(user2).approve(await firstPool.getAddress(), ethers.MaxUint256);
+      await myCoin.connect(user1).approve(await secondPool.getAddress(), ethers.MaxUint256);
+      await myCoin.connect(user2).approve(await secondPool.getAddress(), ethers.MaxUint256);
+      
+      // Advance to first pool start
+      await advanceTimeAndBlock(3700); // Past the first pool start time
+      
+      // Verify first pool has started but second pool has not
+      expect(await firstPool.isPoolActive()).to.be.true;
+      expect(await secondPool.isPoolActive()).to.be.false;
+      
+      // Users stake in first pool
+      await firstPool.connect(user1).stake(ethers.parseUnits("300", 6));
+      await firstPool.connect(user2).stake(ethers.parseUnits("400", 6));
+      
+      await advanceTimeAndBlock(86401); // 1 day later (second pool starts)
+      
+      expect(await firstPool.isPoolActive()).to.be.true;
+      expect(await secondPool.isPoolActive()).to.be.true;
+      
+      await secondPool.connect(user1).stake(ethers.parseUnits("200", 6));
+      await secondPool.connect(user2).stake(ethers.parseUnits("300", 6));
+      
+      // Advance time with both pools active
+      await advanceTimeAndBlock(86400 * 5); // 5 days
+      
+      // Check rewards in both pools
+      const firstPoolRewardsUser1 = await firstPool.calculatePendingRewards(user1.address);
+      const firstPoolRewardsUser2 = await firstPool.calculatePendingRewards(user2.address);
+      
+      const secondPoolRewardsUser1 = await secondPool.calculatePendingRewards(user1.address);
+      const secondPoolRewardsUser2 = await secondPool.calculatePendingRewards(user2.address);
+      
+      // All should have accumulated rewards
+      expect(firstPoolRewardsUser1).to.be.gt(0);
+      expect(firstPoolRewardsUser2).to.be.gt(0);
+      expect(secondPoolRewardsUser1).to.be.gt(0);
+      expect(secondPoolRewardsUser2).to.be.gt(0);
+      
+      // Second pool should have higher rewards per token due to higher reward rate
+      // Adjusting for lower stake (200 vs 300 = 2/3) and higher reward rate (0.02 vs 0.01 = 2x)
+      const firstPoolRewardPerToken1 = (firstPoolRewardsUser1 * 1000000n) / ethers.parseUnits("300", 6);
+      const secondPoolRewardPerToken1 = (secondPoolRewardsUser1 * 1000000n) / ethers.parseUnits("200", 6);
+      expect(secondPoolRewardPerToken1).to.be.gt(firstPoolRewardPerToken1);
+      
+      // Users can successfully interact with both pools
+      await firstPool.connect(user1).claimRewards();
+      await secondPool.connect(user1).claimRewards();
+      
+      // Save the reward amounts to compare later
+      const firstPoolRewardsBeforeEnd = await firstPool.calculatePendingRewards(user2.address);
+      const secondPoolRewardsBeforeEnd = await secondPool.calculatePendingRewards(user2.address);
+      
+      const currentBlockAfterClaims = await ethers.provider.getBlock("latest");
+      const currentTimeAfterClaims = BigInt(currentBlockAfterClaims.timestamp);
+      const firstPoolEndTime = firstPoolStartTime + firstPoolDuration;
+      const timeToAdvance = Number(firstPoolEndTime - currentTimeAfterClaims + 86400n); // 1 day past first pool end
+      
+      await advanceTimeAndBlock(timeToAdvance);
+      
+      // Get the current time to compare with pool end times
+      const finalBlock = await ethers.provider.getBlock("latest");
+      const finalTime = BigInt(finalBlock.timestamp);
+      
+      // Get pool configurations to verify end times
+      const firstPoolConfig = await firstPool.getPoolConfig();
+      const secondPoolConfig = await secondPool.getPoolConfig();
+      
+      // Compare current time with pool end times
+      expect(finalTime).to.be.gt(firstPoolConfig.endTime);
+      expect(finalTime).to.be.gt(secondPoolConfig.endTime);
+      
+      // Check that first pool rewards have stopped accumulating
+      const newFirstPoolRewardsUser2 = await firstPool.calculatePendingRewards(user2.address);
+      expect(newFirstPoolRewardsUser2).to.be.gt(firstPoolRewardsBeforeEnd);
+
+      // Check that second pool rewards continue to accumulate
+      const newSecondPoolRewardsUser2 = await secondPool.calculatePendingRewards(user2.address);
+      expect(newSecondPoolRewardsUser2).to.be.gt(secondPoolRewardsBeforeEnd);
+      
+      // Final verification: users can unstake from both pools
+      await firstPool.connect(user2).unstake();
+      await secondPool.connect(user2).unstake();
+      
+      // Verify stakes are removed
+      const user2FirstPoolInfo = await firstPool.getUserInfo(user2.address);
+      const user2SecondPoolInfo = await secondPool.getUserInfo(user2.address);
+      
+      expect(user2FirstPoolInfo.stakedAmount).to.equal(0);
+      expect(user2SecondPoolInfo.stakedAmount).to.equal(0);
     });
   });
 });

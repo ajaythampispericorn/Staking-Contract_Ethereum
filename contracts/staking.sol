@@ -119,7 +119,6 @@ contract Staking is ReentrancyGuard {
 
         uint256 newTotal = totalStaked + amount;
         if(newTotal > poolConfig.maxTotalStake) revert PoolFull();
-        totalStaked = newTotal;
 
         if (user.stakedAmount == 0) {
             if (amount > poolConfig.maxStakePerUser) revert StakeTooHigh();
@@ -138,6 +137,8 @@ contract Staking is ReentrancyGuard {
             user.rewardDebt = ((newStake * accumulatedRewardsPerStake) / PRECISION_FACTOR) - pendingReward;
             user.lastUpdateTime = block.timestamp;
         }
+
+        totalStaked = newTotal;
 
         stakingToken.safeTransferFrom(msg.sender, address(this), amount);
 
