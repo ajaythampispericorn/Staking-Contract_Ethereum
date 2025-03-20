@@ -6,7 +6,6 @@ import { time } from "@nomicfoundation/hardhat-network-helpers";
 describe("Staking Contract", function () {
   // Contract instances
   let myCoin;
-  let roles;
   let staking;
 
   // Accounts
@@ -21,9 +20,14 @@ describe("Staking Contract", function () {
   let user5;
 
   // Constants
-  const PRECISION_FACTOR = 100000n;
+  const PRECISION_FACTOR = 1000000000000000000n;
   const BASIS_POINTS = 10000n;
   const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
+
+  let POOL_ADMIN_ROLE;
+  let FEE_MANAGER_ROLE;
+  let FEE_COLLECTOR_ROLE;
+  let REWARD_MANAGER_ROLE;
   
   // Pool configuration values
   let startTime;
@@ -86,15 +90,13 @@ describe("Staking Contract", function () {
     const MyCoin = await ethers.getContractFactory("MyCoin");
     myCoin = await MyCoin.deploy();
 
-    // Deploy Roles
-    const Roles = await ethers.getContractFactory("Roles");
-    roles = await Roles.deploy(feeManager.address, rewardManager.address, feeCollector.address);
-
     // Deploy Staking
     const Staking = await ethers.getContractFactory("Staking");
     staking = await Staking.deploy(
       await myCoin.getAddress(),
-      await roles.getAddress(),
+      feeManager.address,
+      rewardManager.address,
+      feeCollector.address,
       startTime,
       duration,
       rewardsPerSecond,
@@ -105,6 +107,11 @@ describe("Staking Contract", function () {
       minFee,
       maxFee
     );
+
+    POOL_ADMIN_ROLE = await staking.POOL_ADMIN_ROLE();
+    FEE_MANAGER_ROLE = await staking.FEE_MANAGER_ROLE();
+    FEE_COLLECTOR_ROLE = await staking.FEE_COLLECTOR_ROLE();
+    REWARD_MANAGER_ROLE = await staking.REWARD_MANAGER_ROLE();
 
     await myCoin.mintCoins(ethers.parseUnits("100000000", 6));
     
@@ -128,10 +135,6 @@ describe("Staking Contract", function () {
   describe("Deployment", function () {
     it("Should set the correct token address", async function () {
       expect(await staking.stakingToken()).to.equal(await myCoin.getAddress());
-    });
-
-    it("Should set the correct roles contract address", async function () {
-      expect(await staking.roles()).to.equal(await roles.getAddress());
     });
 
     it("Should set the correct pool configuration", async function () {
@@ -160,117 +163,201 @@ describe("Staking Contract", function () {
     });
   });
 
-  describe("Roles Contract", function () {
+  describe("Role Management", function () {
     it("Should initialize roles correctly", async function () {
-      expect(await roles.poolAdmin()).to.equal(owner.address);
-      expect(await roles.feeManager()).to.equal(feeManager.address);
-      expect(await roles.rewardManager()).to.equal(rewardManager.address);
-      expect(await roles.feeCollector()).to.equal(feeCollector.address);
+      expect(await staking.isPoolAdmin(owner.address)).to.be.true;
+      expect(await staking.isFeeManager(feeManager.address)).to.be.true;
+      expect(await staking.isFeeCollector(feeCollector.address)).to.be.true;
+      expect(await staking.isRewardManager(rewardManager.address)).to.be.true;
     });
 
     it("Should correctly identify roles", async function () {
-      expect(await roles.isPoolAdmin(owner.address)).to.be.true;
-      expect(await roles.isFeeManager(feeManager.address)).to.be.true;
-      expect(await roles.isRewardManager(rewardManager.address)).to.be.true;
-      expect(await roles.isFeeCollector(feeCollector.address)).to.be.true;
+      expect(await staking.hasRole(POOL_ADMIN_ROLE, owner.address)).to.be.true;
+      expect(await staking.hasRole(FEE_COLLECTOR_ROLE, feeCollector.address)).to.be.true;
+      expect(await staking.hasRole(FEE_MANAGER_ROLE, feeManager.address)).to.be.true;
+      expect(await staking.hasRole(REWARD_MANAGER_ROLE, rewardManager.address)).to.be.true;
       
-      expect(await roles.isPoolAdmin(user1.address)).to.be.false;
-      expect(await roles.isFeeManager(user1.address)).to.be.false;
+      expect(await staking.hasRole(POOL_ADMIN_ROLE, user1.address)).to.be.false;
+      expect(await staking.hasRole(FEE_MANAGER_ROLE, user1.address)).to.be.false;    
     });
 
     it("Should update pool admin role correctly", async function () {
-      await roles.connect(owner).UpdatePoolAdmin(user1.address);
-      expect(await roles.poolAdmin()).to.equal(user1.address);
-      expect(await roles.isPoolAdmin(user1.address)).to.be.true;
-      expect(await roles.isPoolAdmin(owner.address)).to.be.false;
+      await staking.connect(owner).updatePoolAdmin(user1.address);
+      expect(await staking.isPoolAdmin(user1.address)).to.be.true;
+      expect(await staking.isPoolAdmin(owner.address)).to.be.false;
     });
 
     it("Should update fee manager role correctly", async function () {
-      await roles.connect(feeManager).UpdateFeeManager(user1.address);
-      expect(await roles.feeManager()).to.equal(user1.address);
-      expect(await roles.isFeeManager(user1.address)).to.be.true;
-      expect(await roles.isFeeManager(feeManager.address)).to.be.false;
+      await staking.connect(feeManager).updateFeeManager(user1.address);
+      expect(await staking.feeManager()).to.equal(user1.address);
+      expect(await staking.isFeeManager(user1.address)).to.be.true;
+      expect(await staking.isFeeManager(feeManager.address)).to.be.false;
     });
 
     it("Should update fee collector role correctly", async function () {
-      await roles.connect(feeCollector).UpdateFeeCollector(user1.address);
-      expect(await roles.feeCollector()).to.equal(user1.address);
-      expect(await roles.isFeeCollector(user1.address)).to.be.true;
-      expect(await roles.isFeeCollector(feeCollector.address)).to.be.false;
+      await staking.connect(feeCollector).updateFeeCollector(user1.address);
+      expect(await staking.feeCollector()).to.equal(user1.address);
+      expect(await staking.isFeeCollector(user1.address)).to.be.true;
+      expect(await staking.isFeeCollector(feeCollector.address)).to.be.false;
     });
 
     it("Should update reward manager role correctly", async function () {
-      await roles.connect(rewardManager).UpdateRewardManager(user1.address);
-      expect(await roles.rewardManager()).to.equal(user1.address);
-      expect(await roles.isRewardManager(user1.address)).to.be.true;
-      expect(await roles.isRewardManager(rewardManager.address)).to.be.false;
+      await staking.connect(rewardManager).updateRewardManager(user1.address);
+      expect(await staking.rewardManager()).to.equal(user1.address);
+      expect(await staking.isRewardManager(user1.address)).to.be.true;
+      expect(await staking.isRewardManager(rewardManager.address)).to.be.false;
     });
 
     it("Should fail to update roles with zero address", async function () {
-      await expect(roles.connect(owner).UpdatePoolAdmin(ZERO_ADDRESS)).to.be.revertedWithCustomError(roles, "InvalidAddress");
-      await expect(roles.connect(feeManager).UpdateFeeManager(ZERO_ADDRESS)).to.be.revertedWithCustomError(roles, "InvalidAddress");
-      await expect(roles.connect(feeCollector).UpdateFeeCollector(ZERO_ADDRESS)).to.be.revertedWithCustomError(roles, "InvalidAddress");
-      await expect(roles.connect(rewardManager).UpdateRewardManager(ZERO_ADDRESS)).to.be.revertedWithCustomError(roles, "InvalidAddress");
+      await expect(staking.connect(owner).updatePoolAdmin(ZERO_ADDRESS)).to.be.revertedWithCustomError(staking, "InvalidAddress");
+      await expect(staking.connect(feeManager).updateFeeManager(ZERO_ADDRESS)).to.be.revertedWithCustomError(staking, "InvalidAddress");
+      await expect(staking.connect(feeCollector).updateFeeCollector(ZERO_ADDRESS)).to.be.revertedWithCustomError(staking, "InvalidAddress");
+      await expect(staking.connect(rewardManager).updateRewardManager(ZERO_ADDRESS)).to.be.revertedWithCustomError(staking, "InvalidAddress");
     });
 
     it("Should fail to update roles with address conflicts", async function () {
-      await expect(roles.connect(owner).UpdatePoolAdmin(feeManager.address))
-        .to.be.revertedWithCustomError(roles, "AddressConflict");
+      await expect(staking.connect(owner).updatePoolAdmin(feeManager.address))
+        .to.be.revertedWithCustomError(staking, "AddressConflict");
       
-      await expect(roles.connect(feeManager).UpdateFeeManager(rewardManager.address))
-        .to.be.revertedWithCustomError(roles, "AddressConflict");
+      await expect(staking.connect(feeManager).updateFeeManager(rewardManager.address))
+        .to.be.revertedWithCustomError(staking, "AddressConflict");
     });
 
     it("Should fail when unauthorized accounts try to update roles", async function () {
-      await expect(roles.connect(user1).UpdatePoolAdmin(user2.address)).to.be.revertedWithCustomError(roles, "NotAuthorized");
-      await expect(roles.connect(user1).UpdateFeeManager(user2.address)).to.be.revertedWithCustomError(roles, "NotAuthorized");
-      await expect(roles.connect(user1).UpdateFeeCollector(user2.address)).to.be.revertedWithCustomError(roles, "NotAuthorized");
-      await expect(roles.connect(user1).UpdateRewardManager(user2.address)).to.be.revertedWithCustomError(roles, "NotAuthorized");
-    });
-
-    it("Should handle newFeeCollector being same as feeCollector in UpdateFeeCollector", async function () {
-      await expect(roles.connect(feeCollector).UpdateFeeCollector(feeCollector.address))
-        .to.be.revertedWithCustomError(roles, "AddressConflict");
-    });
-
-    it("Should handle newRewardManager being same as rewardManager in UpdateRewardManager", async function () {
-      await expect(roles.connect(rewardManager).UpdateRewardManager(rewardManager.address))
-        .to.be.revertedWithCustomError(roles, "AddressConflict");
+      await expect(staking.connect(user1).updatePoolAdmin(user2.address)).to.be.revertedWithCustomError(staking,
+        "AccessControlUnauthorizedAccount"
+      ).withArgs(user1.address, POOL_ADMIN_ROLE);
+      await expect(staking.connect(user1).updateFeeManager(user2.address)).to.be.revertedWithCustomError(
+        staking,
+        "AccessControlUnauthorizedAccount"
+      ).withArgs(user1.address, FEE_MANAGER_ROLE);
+      await expect(staking.connect(user1).updateFeeCollector(user2.address)).to.be.revertedWithCustomError(
+        staking,
+        "AccessControlUnauthorizedAccount"
+      ).withArgs(user1.address, FEE_COLLECTOR_ROLE);
+      await expect(staking.connect(user1).updateRewardManager(user2.address)).to.be.revertedWithCustomError(
+        staking,
+        "AccessControlUnauthorizedAccount"
+      ).withArgs(user1.address, REWARD_MANAGER_ROLE);
     });
     
-    it("Should fail to deploy Roles with invalid addresses", async function() {
-      const Roles = await ethers.getContractFactory("Roles");
+    it("Should fail to deploy Staking with invalid addresses", async function() {
+      const Staking = await ethers.getContractFactory("Staking");
       
       await expect(
-        Roles.deploy(ZERO_ADDRESS, rewardManager.address, feeCollector.address)
-      ).to.be.revertedWithCustomError(Roles, "InvalidAddress");
-      
+        Staking.deploy(
+          await myCoin.getAddress(),
+          ZERO_ADDRESS,
+          rewardManager.address, 
+          feeCollector.address,
+          startTime,
+          duration,
+          rewardsPerSecond,
+          maxTotalStake,
+          minStakeAmount,
+          maxStakePerUser,
+          feePercentage,
+          minFee,
+          maxFee
+        )
+      ).to.be.revertedWithCustomError(Staking, "InvalidAddress");
+
       await expect(
-        Roles.deploy(feeManager.address, ZERO_ADDRESS, feeCollector.address)
-      ).to.be.revertedWithCustomError(Roles, "InvalidAddress");
-      
+        Staking.deploy(
+          await myCoin.getAddress(),
+          feeManager.address,
+          ZERO_ADDRESS,
+          feeCollector.address,
+          startTime,
+          duration,
+          rewardsPerSecond,
+          maxTotalStake,
+          minStakeAmount,
+          maxStakePerUser,
+          feePercentage,
+          minFee,
+          maxFee
+        )
+      ).to.be.revertedWithCustomError(Staking, "InvalidAddress");
+
       await expect(
-        Roles.deploy(feeManager.address, rewardManager.address, ZERO_ADDRESS)
-      ).to.be.revertedWithCustomError(Roles, "InvalidAddress");
+        Staking.deploy(
+          await myCoin.getAddress(),
+          feeManager.address,
+          rewardManager,
+          ZERO_ADDRESS,
+          startTime,
+          duration,
+          rewardsPerSecond,
+          maxTotalStake,
+          minStakeAmount,
+          maxStakePerUser,
+          feePercentage,
+          minFee,
+          maxFee
+        )
+      ).to.be.revertedWithCustomError(Staking, "InvalidAddress");
     });
     
     it("Should check address conflicts in constructor", async function() {
-      const Roles = await ethers.getContractFactory("Roles");
+      const Staking = await ethers.getContractFactory("Staking");
       
-      //check if poolAdmin (msg.sender) == feeManager
+      //check if deployer (msg.sender) == feeManager
       await expect(
-        Roles.deploy(owner.address, rewardManager.address, feeCollector.address)
-      ).to.be.revertedWithCustomError(Roles, "AddressConflict");
-      
-      //ceck if feeManager == rewardManager
+        Staking.deploy(
+          await myCoin.getAddress(),
+          owner.address,
+          rewardManager.address,
+          feeCollector.address,
+          startTime,
+          duration,
+          rewardsPerSecond,
+          maxTotalStake,
+          minStakeAmount,
+          maxStakePerUser,
+          feePercentage,
+          minFee,
+          maxFee
+        )
+      ).to.be.revertedWithCustomError(Staking, "AddressConflict");
+
+      //check if feeManager == rewardManager
       await expect(
-        Roles.deploy(feeManager.address, feeManager.address, feeCollector.address)
-      ).to.be.revertedWithCustomError(Roles, "AddressConflict");
-      
-      //check if rewardManager == feeCollector
+        Staking.deploy(
+          await myCoin.getAddress(),
+          feeManager.address,
+          feeManager.address,
+          feeCollector.address,
+          startTime,
+          duration,
+          rewardsPerSecond,
+          maxTotalStake,
+          minStakeAmount,
+          maxStakePerUser,
+          feePercentage,
+          minFee,
+          maxFee
+        )
+      ).to.be.revertedWithCustomError(Staking, "AddressConflict");
+
+      //check if rewardmanager == fee collector
       await expect(
-        Roles.deploy(feeManager.address, rewardManager.address, rewardManager.address)
-      ).to.be.revertedWithCustomError(Roles, "AddressConflict");
+        Staking.deploy(
+          await myCoin.getAddress(),
+          feeManager.address,
+          rewardManager.address,
+          rewardManager.address,
+          startTime,
+          duration,
+          rewardsPerSecond,
+          maxTotalStake,
+          minStakeAmount,
+          maxStakePerUser,
+          feePercentage,
+          minFee,
+          maxFee
+        )
+      ).to.be.revertedWithCustomError(Staking, "AddressConflict");      
     });
   });
 
@@ -332,7 +419,10 @@ describe("Staking Contract", function () {
     it("Should fail when unauthorized accounts try to lock rewards", async function () {
       await expect(
         staking.connect(user1).lockRewards(ethers.parseUnits("10000", 6))
-      ).to.be.revertedWithCustomError(staking, "NotAuthorised");
+      ).to.be.revertedWithCustomError(
+        staking,
+        "AccessControlUnauthorizedAccount"
+      ).withArgs(user1.address, REWARD_MANAGER_ROLE);
     });
     
     it("Should fail when unauthorized accounts try to unlock rewards", async function () {
@@ -341,14 +431,14 @@ describe("Staking Contract", function () {
       
       await expect(
         staking.connect(user1).unlockRewards(ethers.parseUnits("5000", 6))
-      ).to.be.revertedWithCustomError(staking, "NotAuthorised");
+      ).to.be.revertedWithCustomError(staking, "AccessControlUnauthorizedAccount").withArgs(user1.address, REWARD_MANAGER_ROLE);
     });
   });
 
   describe("Pool Configuration", function () {
     beforeEach(async function () {
       // Lock much more rewards to ensure there's enough for all tests
-      const requiredRewards = rewardsPerSecond * duration * 10n; // 10x more
+      const requiredRewards = rewardsPerSecond * duration * 10n;
       await staking.connect(rewardManager).lockRewards(requiredRewards);
     });
     
@@ -396,7 +486,9 @@ describe("Staking Contract", function () {
       const Staking = await ethers.getContractFactory("Staking");
       const newStaking = await Staking.deploy(
         await myCoin.getAddress(),
-        await roles.getAddress(),
+        feeManager.address,
+        rewardManager.address,
+        feeCollector.address,
         newStartTime,
         duration,
         rewardsPerSecond, 
@@ -436,7 +528,10 @@ describe("Staking Contract", function () {
           rewardsPerSecond,
           maxTotalStake
         )
-      ).to.be.revertedWithCustomError(staking, "NotAuthorised");
+      ).to.be.revertedWithCustomError(
+        staking,
+        "AccessControlUnauthorizedAccount"
+      ).withArgs(user1.address, POOL_ADMIN_ROLE);
     });
     
     it("Should update fee configuration correctly", async function () {
@@ -488,7 +583,10 @@ describe("Staking Contract", function () {
           minFee,
           maxFee
         )
-      ).to.be.revertedWithCustomError(staking, "NotAuthorised");
+      ).to.be.revertedWithCustomError(
+        staking,
+        "AccessControlUnauthorizedAccount"
+      ).withArgs(user1.address, FEE_MANAGER_ROLE);
     });
   });
 
@@ -524,7 +622,9 @@ describe("Staking Contract", function () {
       const Staking = await ethers.getContractFactory("Staking");
       const newStaking = await Staking.deploy(
         await myCoin.getAddress(),
-        await roles.getAddress(),
+        feeManager.address,
+        rewardManager.address,
+        feeCollector.address,
         newStartTime,
         duration,
         rewardsPerSecond,
@@ -806,7 +906,7 @@ describe("Staking Contract", function () {
     it("Should fail when unauthorized accounts try to collect fees", async function () {
       await expect(
         staking.connect(user1).collectFees()
-      ).to.be.revertedWithCustomError(staking, "NotAuthorised");
+      ).to.be.revertedWithCustomError(staking, "AccessControlUnauthorizedAccount").withArgs(user1.address, FEE_COLLECTOR_ROLE);
     });
     
     it("Should fail to collect fees when none are available", async function () {
@@ -882,7 +982,7 @@ describe("Staking Contract", function () {
       
       await expect(
         staking.connect(user2).setLockPeriod(user1.address, lockEndTime)
-      ).to.be.revertedWithCustomError(staking, "NotAuthorised");
+      ).to.be.revertedWithCustomError(staking, "AccessControlUnauthorizedAccount").withArgs(user2.address, POOL_ADMIN_ROLE);
     });
   });
   
@@ -962,7 +1062,9 @@ describe("Staking Contract", function () {
       const Staking = await ethers.getContractFactory("Staking");
       const newStaking = await Staking.deploy(
         await myCoin.getAddress(),
-        await roles.getAddress(),
+        feeManager.address,
+        rewardManager.address,
+        feeCollector.address,
         newStartTime,
         duration,
         rewardsPerSecond,
@@ -1035,7 +1137,9 @@ describe("Staking Contract", function () {
       const Staking = await ethers.getContractFactory("Staking");
       const newStaking = await Staking.deploy(
         await myCoin.getAddress(),
-        await roles.getAddress(),
+        feeManager.address,
+        rewardManager.address,
+        feeCollector.address,
         newStartTime,
         duration,
         rewardsPerSecond,
@@ -1109,7 +1213,7 @@ describe("Staking Contract", function () {
       
       await expect(
         myCoin.connect(user1).mintCoins(mintAmount)
-      ).to.be.revertedWithCustomError(myCoin, "OwnableUnauthorizedAccount");
+      ).to.be.revertedWithCustomError(myCoin, "AccessControlUnauthorizedAccount");
     });
   });
   
@@ -1285,17 +1389,15 @@ describe("Staking Contract", function () {
       
       // Mint initial tokens
       await stagingCoin.mintCoins(ethers.parseUnits("100000000", 6)); // Increased
-      
-      // Deploy Roles with appropriate addresses
-      const Roles = await ethers.getContractFactory("Roles");
-      const stagingRoles = await Roles.deploy(feeManager.address, rewardManager.address, feeCollector.address);
-      
+    
       // eploy Staking with initial configuration
       const poolStartTime = BigInt(await ethers.provider.getBlock("latest").then(b => b.timestamp)) + 86400n;// 24 hours from now
       const Staking = await ethers.getContractFactory("Staking");
       const stagingStaking = await Staking.deploy(
         await stagingCoin.getAddress(),
-        await stagingRoles.getAddress(),
+        feeManager.address,
+        rewardManager.address,
+        feeCollector.address,
         poolStartTime,
         duration,
         rewardsPerSecond,
@@ -1317,7 +1419,7 @@ describe("Staking Contract", function () {
       
       // Verify all contracts are properly set up
       expect(await stagingStaking.stakingToken()).to.equal(await stagingCoin.getAddress());
-      expect(await stagingStaking.roles()).to.equal(await stagingRoles.getAddress());
+      expect(await stagingStaking.hasRole(await stagingStaking.DEFAULT_ADMIN_ROLE(), owner.address)).to.be.true;
       
       const stats = await stagingStaking.getPoolStats();
       expect(stats._lockedRewards).to.equal(rewardsPerSecond * duration);
@@ -1330,7 +1432,9 @@ describe("Staking Contract", function () {
       const Staking = await ethers.getContractFactory("Staking");
       const testStaking = await Staking.deploy(
         await myCoin.getAddress(),
-        await roles.getAddress(),
+        feeManager.address,
+        rewardManager.address,
+        feeCollector.address,
         testStartTime,
         testDuration,
         rewardsPerSecond,
@@ -1513,7 +1617,9 @@ describe("Staking Contract", function () {
       const Staking = await ethers.getContractFactory("Staking");
       const newStaking = await Staking.deploy(
         await myCoin.getAddress(),
-        await roles.getAddress(),
+        feeManager.address,
+        rewardManager.address,
+        feeCollector.address,
         newStartTime,
         duration,
         rewardsPerSecond,
@@ -1597,8 +1703,6 @@ describe("Staking Contract", function () {
     });
   });
 
-  // Add these tests to the main describe("Staking Contract") block, after the existing "Staging Tests" section
-
   describe("Extended Staging Tests", function () {
     it("Should handle role transfers during an active staking period", async function () {
       // Lock rewards for the pool
@@ -1614,22 +1718,22 @@ describe("Staking Contract", function () {
       const lockEndTime = BigInt(currentBlock.timestamp) + 86400n * 5n; // 5 days
       await staking.connect(owner).setLockPeriod(user1.address, lockEndTime);
  
-      await roles.connect(owner).UpdatePoolAdmin(user4.address);
-      expect(await roles.isPoolAdmin(owner.address)).to.be.false;
-      expect(await roles.isPoolAdmin(user4.address)).to.be.true;
+      await staking.connect(owner).updatePoolAdmin(user4.address);
+      expect(await staking.isPoolAdmin(owner.address)).to.be.false;
+      expect(await staking.isPoolAdmin(user4.address)).to.be.true;
       
       // The original owner should no longer be able to set lock periods
       await expect(
         staking.connect(owner).setLockPeriod(user2.address, lockEndTime)
-      ).to.be.revertedWithCustomError(staking, "NotAuthorised");
+      ).to.be.revertedWithCustomError(staking,"AccessControlUnauthorizedAccount").withArgs(owner.address,POOL_ADMIN_ROLE);
       
       // The new poolAdmin should be able to set lock periods
       await staking.connect(user4).setLockPeriod(user2.address, lockEndTime);
       
       // Transfer feeManager role to user3
-      await roles.connect(feeManager).UpdateFeeManager(user3.address);
-      expect(await roles.isFeeManager(feeManager.address)).to.be.false;
-      expect(await roles.isFeeManager(user3.address)).to.be.true;
+      await staking.connect(feeManager).updateFeeManager(user3.address);
+      expect(await staking.isFeeManager(feeManager.address)).to.be.false;
+      expect(await staking.isFeeManager(user3.address)).to.be.true;
       
       // The new fee manager should be able to update fee config
       await staking.connect(user3).updateFeeConfig(300n, minFee, maxFee);
@@ -1740,7 +1844,9 @@ describe("Staking Contract", function () {
       const Staking = await ethers.getContractFactory("Staking");
       const secondPool = await Staking.deploy(
         await myCoin.getAddress(),
-        await roles.getAddress(),
+        feeManager.address,
+        rewardManager.address,
+        feeCollector.address,
         secondPoolStart,
         duration,
         rewardsPerSecond,
@@ -1856,7 +1962,9 @@ describe("Staking Contract", function () {
       const Staking = await ethers.getContractFactory("Staking");
       const testPool = await Staking.deploy(
         await myCoin.getAddress(),
-        await roles.getAddress(),
+        feeManager.address,
+        rewardManager.address,
+        feeCollector.address,
         testStartTime,
         testDuration,
         rewardsPerSecond,
@@ -1947,7 +2055,9 @@ describe("Staking Contract", function () {
       // Deploy first pool
       const firstPool = await Staking.deploy(
         await myCoin.getAddress(),
-        await roles.getAddress(),
+        feeManager.address,
+        rewardManager.address,
+        feeCollector.address,
         firstPoolStartTime,
         firstPoolDuration,
         firstPoolRewardsPerSecond,
@@ -1962,7 +2072,9 @@ describe("Staking Contract", function () {
       // Deploy second pool
       const secondPool = await Staking.deploy(
         await myCoin.getAddress(),
-        await roles.getAddress(),
+        feeManager.address,
+        rewardManager.address,
+        feeCollector.address,
         secondPoolStartTime,
         secondPoolDuration,
         secondPoolRewardsPerSecond,
