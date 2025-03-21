@@ -13,13 +13,14 @@ A comprehensive Solidity based staking contract system with role based access co
 
 ## Architecture  
 
-The staking systems consists of three main smart contracts :  
+The staking systems consists of two main smart contracts :  
 
 ### MyCoin.sol  
 
 A simple ERC20 token implementation used for staking and rewards.  
 
 - Minting capability for contract owner  
+- Role based access control using Openzeppelin built in features 
 
 ### Staking.sol  
 
@@ -102,6 +103,8 @@ Updates the reward manager role
 - Custom Error Codes : Detailed error reporting for better debugging  
 - Role Separation : Separation of concerns through distinct roles  
 - Input Validation : Comprehensive validation of all inputs  
+- Address Conflict Check : Prevention of role conflicts  
+- Precision Factor : High precision calculations to avoid rounding errors  
 
 ### Testing  
 
