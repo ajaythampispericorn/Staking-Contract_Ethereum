@@ -21,15 +21,6 @@ A simple ERC20 token implementation used for staking and rewards.
 
 - Minting capability for contract owner  
 
-### Roles.sol  
-
-Role based access control system to manage permissions.  
-
-- Pool Admin : Can update pool configurations and set lock periods  
-- Fee Manager : Can update fee confuigurations  
-- Fee Collector : Can collect accumulated fees  
-- Reward Manager : Can lock and unlock rewards for the pool  
-
 ### Staking.sol  
 
 The core staking contract with support for deposits, withdrawals, and reward calculations.  
@@ -38,6 +29,7 @@ The core staking contract with support for deposits, withdrawals, and reward cal
 - Configurable staking limits (min/max per user and total)  
 - Early unstake fee calculation and minimum and maximum thresholds  
 - Reward distribution based on proportional stake amount and time  
+- Role based access control using Openzeppelin built in features  
 
 ## Contract Details  
 
@@ -80,25 +72,25 @@ function setLockPeriod(address user, uint256 lockEndTime)
 Sets a lock period for specific user's stake  
 
 ```  
-function UpdatePoolAdmin(address newAdmin)  
+function updatePoolAdmin(address newAdmin)  
 ```  
 
 Updates the pool admin role  
 
 ```  
-function UpdateFeeManager(address newFeeManager)  
+function updateFeeManager(address newFeeManager)  
 ```  
 
 Updates the fee manager role  
 
 ```  
-function UpdateFeeCollector(address newFeeCollector)  
+function updateFeeCollector(address newFeeCollector)  
 ```  
 
 Updates the fee collector role  
 
 ```  
-function UpdateRewardManager(address newRewardManager)  
+function updateRewardManager(address newRewardManager)  
 ```  
 
 Updates the reward manager role  
